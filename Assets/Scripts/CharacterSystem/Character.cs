@@ -1,201 +1,154 @@
 using UnityEngine;
-using System.Collections.Generic;
+using UnityEngine.UI;
 
 /// <summary>
-/// Character - Nhân vật chính (Hashirama, Player...)
-/// Tích hợp: HP, Mana, Buff, Skill, Combat
+/// Character - Base class cho tất cả nhân vật (Hashirama, Enemy, v.v...)
+/// Quản lý: HP, Death, Components (Buff, Mana, Combat, Effect)
 /// </summary>
 public class Character : MonoBehaviour
 {
-    [Header("HP Stats")]
+    [Header("Character Info")]
     [SerializeField] protected float maxHP = 1000f;
-    [SerializeField] protected float currentHP;
+    [SerializeField] protected float currentHP = 1000f;
+    [SerializeField] protected bool isDead = false;
+    [SerializeField] protected Slider healthBar;
 
-    [Header("Damage")]
-    [SerializeField] protected float baseDamage = 100f;
-
-    [Header("Movement")]
-    [SerializeField] protected float moveSpeed = 6f;
-    [SerializeField] protected float attackRange = 3f;
-
-    [Header("UI")]
-    [SerializeField] protected UnityEngine.UI.Slider healthBar;
-
-    // Systems
-    protected ManaSystem manaSystem;
+    [Header("Systems")]
     protected BuffSystem buffSystem;
-    protected SkillSystem skillSystem;
+    protected ManaSystem manaSystem;
     protected CombatSystem combatSystem;
+    protected EffectSystem effectSystem;
 
-    // Current target
+    [Header("Target")]
     protected Character currentTarget;
-    protected float nextAttackTime = 0f;
-    protected bool isDead = false;
 
     protected virtual void Awake()
     {
-        // Initialize systems
-        gameObject.AddComponent<ManaSystem>();
-        gameObject.AddComponent<BuffSystem>();
-        gameObject.AddComponent<SkillSystem>();
-        gameObject.AddComponent<CombatSystem>();
+        // Get components
+        buffSystem = GetComponent<BuffSystem>();
+        manaSystem = GetComponent<ManaSystem>();
+        combatSystem = GetComponent<CombatSystem>();
+        effectSystem = GetComponent<EffectSystem>();
+
+        // Validate
+        if (buffSystem == null) buffSystem = gameObject.AddComponent<BuffSystem>();
+        if (manaSystem == null) manaSystem = gameObject.AddComponent<ManaSystem>();
+        if (combatSystem == null) combatSystem = gameObject.AddComponent<CombatSystem>();
+        if (effectSystem == null) effectSystem = gameObject.AddComponent<EffectSystem>();
     }
 
     protected virtual void Start()
     {
         currentHP = maxHP;
-        
-        // Get system components
-        manaSystem = GetComponent<ManaSystem>();
-        buffSystem = GetComponent<BuffSystem>();
-        skillSystem = GetComponent<SkillSystem>();
-        combatSystem = GetComponent<CombatSystem>();
-
-        // Setup health bar
-        if (healthBar != null)
-        {
-            healthBar.maxValue = maxHP;
-            healthBar.value = currentHP;
-        }
-
-        Debug.Log($"{gameObject.name} đã khởi tạo! HP: {currentHP}, Mana: {manaSystem.GetMaxMana()}");
+        Debug.Log($"🎮 {gameObject.name} spawn! HP: {currentHP}/{maxHP}");
     }
 
     protected virtual void Update()
     {
-        if (isDead) return;
-
-        // Update target
-        FindClosestTarget();
-
-        // Combat
-        if (currentTarget != null && !currentTarget.IsDead())
-        {
-            float distance = Vector3.Distance(transform.position, currentTarget.transform.position);
-
-            if (distance <= attackRange)
-            {
-                // Try attack
-                combatSystem.TryAttack(currentTarget);
-            }
-            else
-            {
-                // Move towards target
-                MoveTowards(currentTarget.transform.position);
-            }
-        }
-
-        // Check if dead
-        if (currentHP <= 0f)
+        // Check death
+        if (currentHP <= 0 && !isDead)
         {
             Die();
         }
     }
 
-    /// <summary>
-    /// Find closest enemy target
-    /// </summary>
-    protected virtual void FindClosestTarget()
-    {
-        GameObject[] enemies = GameObject.FindGameObjectsWithTag("Enemy");
-        if (enemies.Length == 0)
-        {
-            currentTarget = null;
-            return;
-        }
-
-        Character closest = null;
-        float minDist = Mathf.Infinity;
-
-        foreach (GameObject enemy in enemies)
-        {
-            if (enemy == null) continue;
-            Character enemyChar = enemy.GetComponent<Character>();
-            if (enemyChar == null || enemyChar.IsDead()) continue;
-
-            float dist = Vector3.Distance(transform.position, enemy.transform.position);
-            if (dist < minDist)
-            {
-                minDist = dist;
-                closest = enemyChar;
-            }
-        }
-
-        currentTarget = closest;
-    }
+    #region DAMAGE & HEAL
 
     /// <summary>
-    /// Move towards target position
-    /// </summary>
-    protected virtual void MoveTowards(Vector3 targetPos)
-    {
-        Vector3 direction = (targetPos - transform.position).normalized;
-        
-        // Apply speed buff
-        float speedMultiplier = buffSystem.GetSpeedMultiplier();
-        transform.position += direction * moveSpeed * speedMultiplier * Time.deltaTime;
-    }
-
-    /// <summary>
-    /// Take damage (with buff checks)
+    /// Nhận sát thương (được gọi từ CombatSystem)
     /// </summary>
     public virtual void TakeDamage(float damage)
     {
-        // Check if immune to damage
-        if (buffSystem.IsImmuneToDamage())
-        {
-            Debug.Log($"{gameObject.name} miễn dịch sát thương!");
-            return;
-        }
+        currentHP = Mathf.Max(currentHP - damage, 0f);
+        if (healthBar != null) healthBar.value = currentHP / maxHP;
 
-        // Apply damage reduction from buffs
-        float reduction = buffSystem.GetDamageReduction();
-        float actualDamage = damage * (1f - reduction);
-
-        // Cap damage (like Hashirama's SK4: max 15% HP)
-        float maxDamagePerHit = maxHP * 0.15f;
-        actualDamage = Mathf.Min(actualDamage, maxDamagePerHit);
-
-        currentHP -= actualDamage;
-
-        // Update health bar
-        if (healthBar != null)
-        {
-            healthBar.value = currentHP;
-        }
-
-        Debug.Log($"{gameObject.name} nhận {actualDamage} sát thương. HP còn lại: {currentHP}");
+        Debug.Log($"❤️ {gameObject.name} nhận {damage} damage → {currentHP}/{maxHP}");
     }
 
     /// <summary>
-    /// Character dies
+    /// Hồi máu
+    /// </summary>
+    public virtual void Heal(float amount)
+    {
+        currentHP = Mathf.Min(currentHP + amount, maxHP);
+        if (healthBar != null) healthBar.value = currentHP / maxHP;
+
+        Debug.Log($"💚 {gameObject.name} hồi {amount} HP → {currentHP}/{maxHP}");
+    }
+
+    /// <summary>
+    /// Full heal
+    /// </summary>
+    public void FullHeal()
+    {
+        currentHP = maxHP;
+        if (healthBar != null) healthBar.value = 1f;
+        Debug.Log($"✨ {gameObject.name} HP full → {currentHP}/{maxHP}");
+    }
+
+    #endregion
+
+    #region DEATH
+
+    /// <summary>
+    /// Die
     /// </summary>
     public virtual void Die()
     {
         isDead = true;
-        Debug.Log($"{gameObject.name} đã bị tiêu diệt!");
+        Debug.Log($"💀 {gameObject.name} đã chết!");
         
-        if (healthBar != null)
-        {
-            Destroy(healthBar.gameObject);
-        }
-        
-        Destroy(gameObject);
+        // Disable GameObject hoặc animate death
+        gameObject.SetActive(false);
     }
 
     /// <summary>
-    /// Getters
+    /// Check xem đã chết chưa
     /// </summary>
-    public float GetCurrentHP() => currentHP;
-    public float GetMaxHP() => maxHP;
-    public float GetHPPercent() => currentHP / maxHP;
     public bool IsDead() => isDead;
-    public Character GetTarget() => currentTarget;
-    public float GetBaseDamage() => baseDamage;
 
     /// <summary>
-    /// Setters
+    /// Revive
     /// </summary>
-    public void SetBaseDamage(float newDamage) => baseDamage = newDamage;
-    public void SetMoveSpeed(float newSpeed) => moveSpeed = newSpeed;
+    public void Revive()
+    {
+        isDead = false;
+        FullHeal();
+        manaSystem.FullRestoreMana();
+        effectSystem.ClearAllEffects();
+        gameObject.SetActive(true);
+        Debug.Log($"🔄 {gameObject.name} hồi sinh!");
+    }
+
+    #endregion
+
+    #region TARGET
+
+    /// <summary>
+    /// Set target để tấn công
+    /// </summary>
+    public void SetTarget(Character target)
+    {
+        currentTarget = target;
+        Debug.Log($"🎯 {gameObject.name} target: {(target != null ? target.gameObject.name : "None")}");
+    }
+
+    /// <summary>
+    /// Get current target
+    /// </summary>
+    public Character GetTarget() => currentTarget;
+
+    #endregion
+
+    #region GETTERS
+
+    public float GetMaxHP() => maxHP;
+    public float GetCurrentHP() => currentHP;
+    public float GetHPPercent() => currentHP / maxHP;
+    public BuffSystem GetBuffSystem() => buffSystem;
+    public ManaSystem GetManaSystem() => manaSystem;
+    public CombatSystem GetCombatSystem() => combatSystem;
+    public EffectSystem GetEffectSystem() => effectSystem;
+
+    #endregion
 }
